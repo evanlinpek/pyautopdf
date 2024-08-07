@@ -1,12 +1,8 @@
 import os
 import re
 from pathlib import Path
-
 from PyPDF2 import PdfReader, PdfWriter
-import logging
 from PIL import Image
-import io
-from PyPDF2 import PdfFileReader, PdfFileWriter
 import pdf2image
 import pdfplumber
 from decimal import Decimal, getcontext
@@ -72,15 +68,19 @@ def merge_pdfs(paths, output="_merged.pdf"):
     pdf_writer = PdfWriter()
     for path in paths_existed:
         pdf_reader = PdfReader(path)
+        print(f"{path} metadata : {pdf_reader.metadata}")
         for index, page in enumerate(pdf_reader.pages):
             # add each page into PdfFileWriter
-            print(f"Adding the pdf ：{path}  {index} page： {page}")
             pdf_writer.add_page(pdf_reader.pages[index])
+            print(f"Added the pdf ：{path}  {index}")
 
     output_file = os.path.join(output, os.path.basename(output) + "_merged.pdf")
     print(f"Output PDF file：{output_file}")
     with open(output_file, 'wb') as out:
         pdf_writer.write(out)
+    pdf_reader = PdfReader(output_file)
+    print(f"merged pdf metadata:{pdf_reader.metadata}")
+
     return True
 
 
@@ -102,7 +102,7 @@ def merge_all_pdfs():
     """
     root_folder = os.getcwd()
     folders_containing_pdfs = find_folders_with_pdfs(root_folder)
-
+    pdf_counter = 0
     # print the folders including *.pdf,and generate the pdf file
     for folder in folders_containing_pdfs:
         print(folder)
@@ -110,8 +110,9 @@ def merge_all_pdfs():
         print(f"want to merge files:{files}")
         if files:
             merge_pdfs(files, output=folder)
+            pdf_counter = pdf_counter + 1
 
-
+    print(f"Total merged pdfs :{pdf_counter}")
 
 
 def merge_pdf_pages_to_one(pdf1_path, pdf2_path, output_path):
@@ -160,48 +161,64 @@ def calculate_total_price_tax_from_pdf(file):
     3. 无上述两种，但包含总计的
     4. 后续待补充
     """
-    with pdfplumber.open(file) as pdf:
-        price_tax_text = []
-        price_tax_value = []
-        for index, page in enumerate(pdf.pages):
-            page_text = page.extract_text()
-            print(f"\npage:{index + 1}")
-            print(page_text)
-            text_arr = page_text.split('\n')
-            for line in text_arr:
-                # print(line)
-                if ("价税合计" in line) and (( "¥"  in line) | ("￥" in line)):
-                    price_tax_text.append(line)
-                    print(line)
-                    continue
-                if contains_uppercase_currency_numbers(line) & (( "¥"  in line)| ("￥" in line)):
-                    price_tax_text.append(line)
-                    print(line)
-                # if ("总计" in line) & (( "¥"  in line)):
-                #     price_tax_text.append(line)
-                #     print(line)
+    try:
+        with pdfplumber.open(file) as pdf:
+            price_tax_text = []
+            price_tax_value = []
 
-        print(f"price_tax_text: {price_tax_text}")
-        price_tax_text_set = set(price_tax_text)
-        print(f"price_tax_text_set: {price_tax_text_set}")
+            for index, page in enumerate(pdf.pages):
+                page_text = page.extract_text()
+                # print(f"\npage:{index + 1}")
+                # print(page_text)
+                text_arr = page_text.split('\n')
+                for line in text_arr:
+                    # print(line)
+                    if ("价税合计" in line):   # and (("¥" in line) | ("￥" in line)
+                        price_tax_text.append(line)
+                        # print(line)
+                        continue
+                    if contains_uppercase_currency_numbers(line) & (( "¥"  in line)| ("￥" in line)):
+                        price_tax_text.append(line)
+                        # print(line)
+                    # if ("总计" in line) & (( "¥"  in line)):
+                    #     price_tax_text.append(line)
+                    #     print(line)
 
-        for item in price_tax_text_set:
-            price_tax_value.append(extract_cny_numerical_values(item))
-        print(price_tax_value)
-        sum = Decimal('0')
-        for val in price_tax_value:
-            for v in val:
-                sum += Decimal(v)
-        rounded_result = sum.quantize(Decimal('0.01'))
-        print(f"sum = {sum}")
-        print(f"rounded_result = {rounded_result}")
+            print(f"price_tax_text: {price_tax_text}")
+            # price_tax_text_set = set(price_tax_text)
+            price_tax_text_set = price_tax_text
 
-        return rounded_result
+            print(f"price_tax_text_set: {price_tax_text_set}")
+
+            for item in price_tax_text_set:
+                price_tax_value.append(extract_cny_numerical_values(item))
+
+            print(price_tax_value)
+            price_tax_value_list = []
+
+            total_price = Decimal('0')
+            for val in price_tax_value:
+                for v in val:
+                    total_price += Decimal(v)
+                    price_tax_value_list.append(v)
+
+            price_tax_value_list.sort(key=float)
+            # rounded_result = sum.quantize(Decimal('0.01'))
+            rounded_result = total_price
+
+            print(f"total = {total_price}")
+            print(f"rounded_result = {rounded_result}")
+
+            return rounded_result, price_tax_value_list
+    except Exception as e:
+        print(f"Exception:{e}")
+        return False, False
+
 
 if __name__ == '__main__':
 
     # 1. merge pdfs
-    # merge_all_pdfs()
+    merge_all_pdfs()
 
     # # 2. 两页PDF合并到1页
     # pdf1_path = '1.pdf'
@@ -212,21 +229,29 @@ if __name__ == '__main__':
     # # 调用函数合并PDF页面内容
     # merge_pdf_pages_to_one(pdf1_path, pdf2_path, output_path)
 
-    folders = find_folders_with_pdfs(os.getcwd())
-    for folder in folders:
-        print(folder)
-        files = get_files_in_current_path(current_path=folder)
-        for file in files:
-            print(file)
-            total = calculate_total_price_tax_from_pdf(file)
-            print(f"file:{file} total:{total}")
-            file_name = os.path.basename(file)
-            result_path = Path(folder).joinpath(f"{file_name}_total_¥{total}.txt")
-            with open(f"{file_name}_total_¥{total}.txt",'w') as f:
-                f.write(f"{file}\ntotal: ¥{total}")
-            with open(result_path,'w') as f:
-                f.write(f"{file}\ntotal: ¥{total}")
-
+    # folders = find_folders_with_pdfs(os.getcwd())
+    # print(f"length of files:{len(folders)}")
+    # for folder in folders:
+    #
+    #     try:
+    #         files = get_files_in_current_path(current_path=folder)
+    #         for file in files:
+    #             print(file)
+    #
+    #             total, price_tax_list = calculate_total_price_tax_from_pdf(file)
+    #             if not total:
+    #                 continue
+    #             print(f"file:{file} total:{total}")
+    #             file_name = os.path.basename(file)
+    #             result_path = Path(folder).joinpath(f"{file_name}_total_¥{total}.txt")
+    #             # with open(f"{file_name}_total_¥{total}.txt",'w',encoding='utf-8') as f:
+    #             #     f.write(f"{file}\ntotal: ¥{total}")
+    #             with open(result_path,'w',encoding='utf-8') as f:
+    #                 text = '\n'.join(price_tax_list)
+    #                 f.write(f"{file}\nprice list,count:{len(price_tax_list)}\ntotal: ¥{total}\n{text}")
+    #
+    #     except Exception as e:
+    #         print(f"Exception:{e}")
 
 
 
